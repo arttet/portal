@@ -1,0 +1,26 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: oxfmt
+      glob: "*.{ts,js,tsx,jsx,json,jsonc}"
+      run: bunx oxfmt {staged_files}
+
+    - name: dprint
+      glob: "*.md"
+      run: bunx dprint fmt --allow-no-files {staged_files}
+
+    - name: oxlint
+      glob: "*.{ts,js,tsx,jsx}"
+      run: bunx --bun oxlint --fix {staged_files}
+
+    - name: stylelint
+      glob: "*.{css,svelte}"
+      run: bunx stylelint --fix {staged_files}
+
+    - name: markdownlint
+      glob: "*.md"
+      run: bunx markdownlint-cli2 --fix {staged_files}
+
+    - name: cspell
+      glob: "*.{md,svelte,ts,js}"
+      run: bunx --bun cspell {staged_files} --no-progress

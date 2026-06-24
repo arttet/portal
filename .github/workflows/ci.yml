@@ -1,0 +1,311 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 1 * * *" # Daily at 01:00 UTC
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same ref to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 1: Format Quality Gate
+  # ---------------------------------------------------------------------------
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Format check (oxfmt)
+        run: bunx oxfmt --check .
+
+      - name: Format check (dprint)
+        run: bunx dprint check
+
+  # ---------------------------------------------------------------------------
+  # Stage 1: Lint Quality Gate
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Restore Bun cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check (svelte-check)
+        run: bunx svelte-kit sync && bunx svelte-check --tsconfig ./tsconfig.json
+
+      - name: Lint (oxlint)
+        run: bunx --bun oxlint --deny-warnings .
+
+      - name: Lint CSS (stylelint)
+        run: bun run lint:css
+
+      - name: Lint Svelte (eslint)
+        run: bun run lint:svelte
+
+      - name: Unused code (knip)
+        run: bunx knip
+
+      - name: Lint Markdown
+        run: bun run lint:md
+
+      - name: Spell check
+        run: bunx --bun cspell "**/*.{md,svelte,ts,js}" --no-progress
+
+  # ---------------------------------------------------------------------------
+  # Stage 1: Security Quality Gate
+  # ---------------------------------------------------------------------------
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Review dependency changes
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
+      - name: Secret scanning
+        uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70 # v3.95.6
+        with:
+          extra_args: --results=verified,unknown
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Build
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    needs: [fmt, lint, security]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Restore Bun cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Audit dependencies
+        run: bun audit
+
+      - name: Build site
+        run: bun run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portal-build
+          path: target/build
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Test
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    needs: [fmt, lint, security]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Restore Bun cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright (chromium)
+        run: bunx playwright install --with-deps chromium
+
+      - name: Unit tests + coverage
+        run: bun run test:unit:coverage
+
+      - name: Upload coverage to Codecov
+        if: ${{ env.HAS_CODECOV == 'true' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        env:
+          HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: Cloudflare Preflight
+  # ---------------------------------------------------------------------------
+  cf-preflight:
+    name: Cloudflare Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    needs: [fmt, lint, security, build, test]
+
+    if: |
+      github.event_name != 'schedule' &&
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true)
+
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+
+    steps:
+      - name: Check Cloudflare configuration
+        id: check
+        env:
+          ENABLED: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' && vars.CF_PAGES_PROJECT != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: Deploy Cloudflare Pages
+  # ---------------------------------------------------------------------------
+  deploy-cf-pages:
+    name: Deploy Cloudflare Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: needs.cf-preflight.outputs.enabled == 'true'
+
+    needs: cf-preflight
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_PAGES_PROJECT: ${{ vars.CF_PAGES_PROJECT }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: portal-build
+          path: target/build
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Deploy preview (pull request)
+        if: ${{ github.event_name == 'pull_request' }}
+        id: cf_preview
+        env:
+          CF_PAGES_BRANCH: pr-${{ github.event.pull_request.number }}
+        run: |
+          output="$(bunx wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT" --branch "$CF_PAGES_BRANCH")"
+          echo "$output"
+
+          preview_url="$(printf '%s\n' "$output" | sed -nE 's#.*(https://[^[:space:]]+\.pages\.dev).*#\1#p' | tail -n 1)"
+          if [ -z "$preview_url" ]; then
+            echo "Failed to extract Cloudflare Pages preview URL from wrangler output." >&2
+            exit 1
+          fi
+
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy production (main)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: bunx wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT"
+
+      - name: Update sticky PR comment
+        if: ${{ github.event_name == 'pull_request' && steps.cf_preview.outputs.preview_url != '' }}
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          header: cloudflare-preview
+          message: |
+            ## Cloudflare Pages Preview
+
+            Deployed: ${{ steps.cf_preview.outputs.preview_url }}

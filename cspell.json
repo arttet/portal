@@ -1,0 +1,35 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "dictionaryDefinitions": [
+    {
+      "name": "misc",
+      "words": [
+        "Artyom",
+        "arttet",
+        "bun",
+        "bunx",
+        "cloudflare",
+        "cspell",
+        "dprint",
+        "knip",
+        "lefthook",
+        "markdownlint",
+        "misconfig",
+        "oxfmt",
+        "oxlint",
+        "playwright",
+        "startpage",
+        "sveltekit",
+        "tailwind",
+        "tailwindcss",
+        "trivy",
+        "unstarted",
+        "vitest",
+        "wrangler"
+      ]
+    }
+  ],
+  "dictionaries": ["misc"],
+  "ignorePaths": ["node_modules/**", ".svelte-kit/**", "coverage/**", "bun.lock", "target/**"]
+}
