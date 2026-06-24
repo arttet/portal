@@ -30,7 +30,7 @@
     "@vitest/coverage-v8": "^4.1.9",
     "eslint": "^9.39.4",
     "eslint-plugin-svelte": "^2.46.1",
-    "globals": "^15.15.0",
+    "globals": "^17.6.0",
     "markdownlint-cli2": "^0.17.2",
     "playwright": "^1.61.1",
     "stylelint": "^16.26.1",
