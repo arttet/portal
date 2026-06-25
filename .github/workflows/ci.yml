@@ -93,8 +93,6 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -163,13 +161,7 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: SAST (Semgrep)
-        run: |
-          pipx run semgrep scan \
-            --config=p/javascript \
-            --config=p/typescript \
-            --error \
-            --quiet \
-            .
+        run: pipx run semgrep==1.168.0 scan --config auto --error --quiet .
 
   # ---------------------------------------------------------------------------
   # Stage 1: Antivirus Scan Gate
@@ -202,14 +194,55 @@ jobs:
           sudo rm -f /var/log/clamav/freshclam.log
 
       - name: Update virus database
-        run: sudo freshclam
+        run: |
+          for attempt in 1 2 3; do
+            sudo freshclam && exit 0
+            echo "::warning::freshclam attempt $attempt failed, retrying in 30s..."
+            sleep 30
+          done
+          echo "::warning::ClamAV database update failed after 3 attempts; scanning with installed definitions"
 
       - name: Scan for malware
         run: |
           clamscan -r \
             --infected \
             --exclude-dir='^\.git$' \
+            --detect-pua \
+            --heuristic-scan-precedence \
             .
+
+  # ---------------------------------------------------------------------------
+  # Stage 1: CodeQL Analysis Gate
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          languages: javascript-typescript
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          category: /language:javascript-typescript
 
   # ---------------------------------------------------------------------------
   # Stage 2: Build
@@ -219,12 +252,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security, antivirus]
+    needs: [fmt, lint, security, codeql, antivirus]
 
     permissions:
       contents: read
-      id-token: write
-      attestations: write
 
     steps:
       - name: Harden runner
@@ -245,8 +276,6 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -264,20 +293,63 @@ jobs:
           path: target/build
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------------
+  # Stage 2: Attest Build (non-PR only — needs OIDC)
+  # ---------------------------------------------------------------------------
+  attest:
+    name: Attest Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: build
+    if: github.event_name != 'pull_request'
+
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Download build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: portal-build
+          path: target/build
+
+      - name: Package build output
+        run: tar -czf target/portal-build.tar.gz -C target/build .
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-path: target/build
+          subject-path: target/portal-build.tar.gz
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: target/build
+          format: spdx-json
+          output-file: target/sbom.spdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: target/portal-build.tar.gz
+          sbom-path: target/sbom.spdx.json
 
   # ---------------------------------------------------------------------------
   # Stage 2: Chromium Unit Tests
   # ---------------------------------------------------------------------------
   unit-chromium:
-    name: Unit Tests (Chromium)
+    name: Chromium Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security, antivirus]
+    needs: [fmt, lint, security, codeql, antivirus]
 
     steps:
       - name: Harden runner
@@ -298,8 +370,6 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -318,7 +388,7 @@ jobs:
         with:
           name: unit-test-results
           path: target/test-results/vitest.junit.xml
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload unit coverage artifact
         if: ${{ !cancelled() }}
@@ -326,17 +396,17 @@ jobs:
         with:
           name: unit-coverage
           path: target/coverage/lcov.info
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Stage 2: Firefox Unit Tests
   # ---------------------------------------------------------------------------
   unit-firefox:
-    name: Unit Tests (Firefox)
+    name: Firefox Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security, antivirus]
+    needs: [fmt, lint, security, codeql, antivirus]
 
     steps:
       - name: Harden runner
@@ -357,8 +427,6 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -379,7 +447,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security, antivirus]
+    needs: [fmt, lint, security, codeql, antivirus]
 
     steps:
       - name: Harden runner
@@ -400,8 +468,6 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -418,7 +484,7 @@ jobs:
         with:
           name: integration-test-results
           path: target/test-results/playwright.junit.xml
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload Playwright report artifact
         if: ${{ !cancelled() }}
@@ -426,18 +492,18 @@ jobs:
         with:
           name: playwright-report
           path: target/playwright-report
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Stage 3: Test Reports
+  # Stage 3: Codecov
   # ---------------------------------------------------------------------------
-  test-reports:
-    name: Test Reports
+  codecov:
+    name: Codecov
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     needs: [unit-chromium, integration]
-    if: ${{ !cancelled() }}
+    if: ${{ needs.unit-chromium.result == 'success' || needs.integration.result == 'success' }}
 
     env:
       HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
@@ -523,7 +589,7 @@ jobs:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
-          egress-policy: audit
+          egress-policy: block
 
       - name: Check Cloudflare configuration
         id: check
@@ -539,16 +605,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: needs.cf-preflight.outputs.enabled == 'true'
-
     needs: cf-preflight
 
     permissions:
-      contents: read
       pull-requests: write
 
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CF_PAGES_PROJECT: ${{ vars.CF_PAGES_PROJECT }}
 
     steps:
@@ -556,25 +618,6 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-
-      - name: Restore Bun cache
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
 
       - name: Download build artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -584,42 +627,27 @@ jobs:
 
       - name: Deploy preview (pull request)
         if: ${{ github.event_name == 'pull_request' }}
-        id: cf_preview
-        env:
-          CF_PAGES_BRANCH: pr-${{ github.event.pull_request.number }}
-        run: |
-          output_file="$(mktemp)"
-          bunx --no-install wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT" --branch "$CF_PAGES_BRANCH" --commit-dirty=true 2>&1 | tee "$output_file"
-
-          urls="$(sed -nE 's#.*(https://[^[:space:]]+\.pages\.dev).*#\1#p' "$output_file" | sort -u)"
-          preview_url="$(sed -nE 's#.*Deployment alias URL: (https://[^[:space:]]+\.pages\.dev).*#\1#p' "$output_file" | tail -n 1)"
-          if [ -z "$preview_url" ]; then
-            preview_url="$(sed -nE 's#.*Deployment complete!.*(https://[^[:space:]]+\.pages\.dev).*#\1#p' "$output_file" | tail -n 1)"
-          fi
-
-          if [ -z "$preview_url" ]; then
-            echo "Failed to extract Cloudflare Pages preview URL from wrangler output." >&2
-            exit 1
-          fi
-
-          {
-            echo "## Cloudflare Pages URLs"
-            echo
-            printf '%s\n' "$urls"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+        id: deploy
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy target/build --project-name=${{ env.CF_PAGES_PROJECT }} --branch=pr-${{ github.event.pull_request.number }} --commit-dirty=true
 
       - name: Deploy production (main)
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        run: bunx --no-install wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT" --commit-dirty=true
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy target/build --project-name=${{ env.CF_PAGES_PROJECT }} --commit-dirty=true
 
       - name: Update sticky PR comment
-        if: ${{ github.event_name == 'pull_request' && steps.cf_preview.outputs.preview_url != '' }}
+        if: ${{ github.event_name == 'pull_request' && steps.deploy.outputs.pages-deployment-alias-url != '' }}
         uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
         with:
           header: cloudflare-preview
           message: |
             ## Cloudflare Pages Preview
 
-            Deployed: ${{ steps.cf_preview.outputs.preview_url }}
+            Deployed: ${{ steps.deploy.outputs.pages-deployment-alias-url }}

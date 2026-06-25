@@ -22,8 +22,15 @@
         "oxlint",
         "playwright",
         "prerender",
+        "anchore",
+        "HSTS",
+        "nosniff",
         "sarif",
+        "sbom",
         "scorecard",
+        "semgrep",
+        "sigstore",
+        "spdx",
         "startpage",
         "sveltekit",
         "tailwind",
@@ -37,5 +44,6 @@
     }
   ],
   "dictionaries": ["misc"],
+  "globOptions": { "dot": true },
   "ignorePaths": ["node_modules/**", ".svelte-kit/**", "coverage/**", "bun.lock", "target/**"]
 }

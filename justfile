@@ -89,7 +89,7 @@ preview:
 [group('Development')]
 clean:
     @echo "🧹 Cleaning..."
-    rm -rf {{ build_dir }} .lighthouseci .svelte-kit .wrangler node_modules
+    rm -rf {{ build_dir }} .lighthouseci .svelte-kit node_modules
     @echo "✅ Cleaned!"
 
 # ==============================================================================
