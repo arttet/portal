@@ -1,6 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
+  outputDir: "target/test-results",
+  timeout: 60_000,
   reporter: [
     ["list"],
     ["junit", { outputFile: "target/test-results/playwright.junit.xml" }],
