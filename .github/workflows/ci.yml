@@ -57,9 +57,7 @@ jobs:
     timeout-minutes: 5
 
     permissions:
-      actions: read
-      contents: read
-      security-events: write
+      contents: read # Required to checkout the repository
 
     steps:
       - name: Harden runner
@@ -74,16 +72,6 @@ jobs:
 
       - name: Run actionlint
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
-
-      - name: Run zizmor
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
-        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
-
-      - name: Run zizmor (fork-safe)
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
-        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
-        with:
-          advanced-security: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -116,7 +104,11 @@ jobs:
         run: bun run lint:md
 
       - name: Spell check
-        run: bunx --bun cspell "**/*.{md,svelte,ts,js}" --no-progress
+        uses: streetsidesoftware/cspell-action@de2a73e963e7443969755b648a1008f77033c5b2 # v8.4.0
+        with:
+          check_dot_files: true
+          files: |
+            **/*.{md,mdx,txt,yml,yaml,json,jsonc,toml}
 
   # ---------------------------------------------------------------------------
   # Stage 1: Security Quality Gate
@@ -127,8 +119,11 @@ jobs:
     timeout-minutes: 10
 
     permissions:
-      contents: read
-      pull-requests: read
+      actions: read # Required by scorecard-action to inspect workflow files
+      contents: read # Required to checkout the repository
+      id-token: write # Required by scorecard-action to publish results to OpenSSF
+      pull-requests: read # Required by dependency-review-action
+      security-events: write # Required to upload SARIF results to GitHub Security tab
 
     steps:
       - name: Harden runner
@@ -159,9 +154,44 @@ jobs:
           scanners: secret,misconfig
           exit-code: "1"
           severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-results.sarif
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: trivy-results.sarif
 
       - name: SAST (Semgrep)
-        run: pipx run semgrep==1.168.0 scan --config auto --error --quiet .
+        run: pipx run semgrep==1.168.0 ci --oss-only
+
+      - name: Zizmor
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          persona: pedantic
+
+      - name: Zizmor (fork-safe)
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          advanced-security: false
+          persona: pedantic
+
+      - name: Scorecard
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      - name: Upload Scorecard results to Security tab
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: results.sarif
 
   # ---------------------------------------------------------------------------
   # Stage 1: Antivirus Scan Gate
@@ -220,8 +250,8 @@ jobs:
     timeout-minutes: 15
 
     permissions:
-      contents: read
-      security-events: write
+      contents: read # Required to checkout the repository
+      security-events: write # Required to upload CodeQL SARIF results to GitHub Security tab
 
     steps:
       - name: Harden runner
@@ -255,7 +285,7 @@ jobs:
     needs: [fmt, lint, security, codeql, antivirus]
 
     permissions:
-      contents: read
+      contents: read # Required to checkout the repository
 
     steps:
       - name: Harden runner
@@ -304,9 +334,9 @@ jobs:
     if: github.event_name != 'pull_request'
 
     permissions:
-      contents: read
-      id-token: write
-      attestations: write
+      attestations: write # Required to create artifact attestations
+      contents: read # Required to download the build artifact
+      id-token: write # Required by Sigstore to sign attestations via OIDC
 
     steps:
       - name: Harden runner
@@ -608,7 +638,7 @@ jobs:
     needs: cf-preflight
 
     permissions:
-      pull-requests: write
+      pull-requests: write # Required to post the Cloudflare Pages preview URL comment on PRs
 
     env:
       CF_PAGES_PROJECT: ${{ vars.CF_PAGES_PROJECT }}
