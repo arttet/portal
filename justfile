@@ -64,7 +64,7 @@ lint:
     bun run lint:svelte
     bunx knip
     bun run lint:md
-    bunx --bun cspell "**/*.{md,svelte,ts,js}" --no-progress
+    bunx --bun cspell "**/*.{md,mdx,txt,yml,yaml,json,jsonc,toml}" --no-progress
 
 [doc('Build production build')]
 [group('Development')]

@@ -2,7 +2,7 @@ pre-commit:
   parallel: true
   jobs:
     - name: oxfmt
-      glob: "*.{ts,js,tsx,jsx,json,jsonc}"
+      glob: "*.{ts,js,tsx,jsx,json,jsonc,yml,yaml}"
       run: bunx oxfmt {staged_files}
 
     - name: dprint
@@ -22,5 +22,5 @@ pre-commit:
       run: bunx markdownlint-cli2 --fix {staged_files}
 
     - name: cspell
-      glob: "*.{md,svelte,ts,js}"
+      glob: "*.{md,mdx,txt,yml,yaml,json,jsonc,toml,svelte,ts,js}"
       run: bunx --bun cspell {staged_files} --no-progress
