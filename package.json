@@ -33,7 +33,7 @@
     "globals": "^17.6.0",
     "markdownlint-cli2": "^0.22.1",
     "playwright": "^1.61.1",
-    "stylelint": "^16.26.1",
+    "stylelint": "^17.13.0",
     "stylelint-config-standard": "^37.0.0",
     "svelte": "^5.56.4",
     "svelte-check": "^4.7.1",
