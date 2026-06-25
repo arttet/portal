@@ -52,6 +52,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -62,7 +67,14 @@ jobs:
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
 
       - name: Run zizmor
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
         uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+
+      - name: Run zizmor (fork-safe)
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          advanced-security: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -180,10 +192,10 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Stage 2: Test
+  # Stage 2: Chromium Unit Tests
   # ---------------------------------------------------------------------------
-  test:
-    name: Test
+  unit-chromium:
+    name: Unit Tests (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -212,17 +224,184 @@ jobs:
       - name: Install Playwright (chromium)
         run: bunx playwright install --with-deps chromium
 
-      - name: Unit tests + coverage
+      - name: Run unit tests with coverage
+        env:
+          VITEST_BROWSER: chromium
         run: bun run test:unit:coverage
 
-      - name: Upload coverage to Codecov
-        if: ${{ env.HAS_CODECOV == 'true' }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        env:
-          HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
+      - name: Upload unit test results artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          name: unit-test-results
+          path: target/test-results/vitest.junit.xml
+          if-no-files-found: warn
+
+      - name: Upload unit coverage artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unit-coverage
+          path: target/coverage/lcov.info
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Firefox Unit Tests
+  # ---------------------------------------------------------------------------
+  unit-firefox:
+    name: Unit Tests (Firefox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    needs: [fmt, lint, security]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Restore Bun cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright (firefox)
+        run: bunx playwright install --with-deps firefox
+
+      - name: Run browser unit tests in Firefox
+        env:
+          VITEST_BROWSER: firefox
+        run: bunx vitest run --project=client --passWithNoTests
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Integration Tests
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    needs: [fmt, lint, security]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Restore Bun cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright (chromium)
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run integration tests
+        run: bun run test:e2e
+
+      - name: Upload integration test results artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-test-results
+          path: target/test-results/playwright.junit.xml
+          if-no-files-found: warn
+
+      - name: Upload Playwright report artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: target/playwright-report
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: Test Reports
+  # ---------------------------------------------------------------------------
+  test-reports:
+    name: Test Reports
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    needs: [unit-chromium, integration]
+    if: ${{ !cancelled() }}
+
+    env:
+      HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download unit test results artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unit-test-results
+          path: target/test-results
+
+      - name: Download unit coverage artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unit-coverage
+          path: target/coverage
+
+      - name: Download integration test results artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: integration-test-results
+          path: target/test-results
+
+      - name: Upload unit test results to Codecov
+        if: ${{ env.HAS_CODECOV == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          fail_ci_if_error: true
+          files: target/test-results/vitest.junit.xml
+          flags: unittests
+          report_type: test_results
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+
+      - name: Upload integration test results to Codecov
+        if: ${{ env.HAS_CODECOV == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          fail_ci_if_error: true
+          files: target/test-results/playwright.junit.xml
+          flags: integration
+          report_type: test_results
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload unit coverage to Codecov
+        if: ${{ env.HAS_CODECOV == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          fail_ci_if_error: true
+          files: target/coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # ---------------------------------------------------------------------------
   # Stage 3: Cloudflare Preflight
@@ -232,7 +411,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security, build, test]
+    needs: [fmt, lint, security, build, unit-chromium, unit-firefox, integration]
 
     if: |
       github.event_name != 'schedule' &&
@@ -270,14 +449,30 @@ jobs:
       CF_PAGES_PROJECT: ${{ vars.CF_PAGES_PROJECT }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Restore Bun cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - name: Download build artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: portal-build
           path: target/build
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Deploy preview (pull request)
         if: ${{ github.event_name == 'pull_request' }}
@@ -285,20 +480,31 @@ jobs:
         env:
           CF_PAGES_BRANCH: pr-${{ github.event.pull_request.number }}
         run: |
-          output="$(bunx wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT" --branch "$CF_PAGES_BRANCH")"
-          echo "$output"
+          output_file="$(mktemp)"
+          bunx --no-install wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT" --branch "$CF_PAGES_BRANCH" --commit-dirty=true 2>&1 | tee "$output_file"
 
-          preview_url="$(printf '%s\n' "$output" | sed -nE 's#.*(https://[^[:space:]]+\.pages\.dev).*#\1#p' | tail -n 1)"
+          urls="$(sed -nE 's#.*(https://[^[:space:]]+\.pages\.dev).*#\1#p' "$output_file" | sort -u)"
+          preview_url="$(sed -nE 's#.*Deployment alias URL: (https://[^[:space:]]+\.pages\.dev).*#\1#p' "$output_file" | tail -n 1)"
+          if [ -z "$preview_url" ]; then
+            preview_url="$(sed -nE 's#.*Deployment complete!.*(https://[^[:space:]]+\.pages\.dev).*#\1#p' "$output_file" | tail -n 1)"
+          fi
+
           if [ -z "$preview_url" ]; then
             echo "Failed to extract Cloudflare Pages preview URL from wrangler output." >&2
             exit 1
           fi
 
+          {
+            echo "## Cloudflare Pages URLs"
+            echo
+            printf '%s\n' "$urls"
+          } >> "$GITHUB_STEP_SUMMARY"
+
           echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
 
       - name: Deploy production (main)
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        run: bunx wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT"
+        run: bunx --no-install wrangler pages deploy target/build --project-name "$CF_PAGES_PROJECT" --commit-dirty=true
 
       - name: Update sticky PR comment
         if: ${{ github.event_name == 'pull_request' && steps.cf_preview.outputs.preview_url != '' }}
