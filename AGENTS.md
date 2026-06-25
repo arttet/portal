@@ -107,7 +107,7 @@ bun run test:e2e
 - `check`: `wrangler types --check && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json`
 - `check:watch`: `svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch`
 - `test:e2e`: `playwright install && playwright test`
-- `test`: `npm run test:unit -- --run && npm run test:e2e`
+- `test`: `bun run test:unit:coverage && bun run test:e2e`
 - `gen`: `wrangler types`
 - `test:unit`: `vitest`
 
@@ -149,7 +149,7 @@ Two Vitest projects are defined:
 **E2E tests (`playwright.config.ts`):**
 
 - Test files match `**/*.e2e.{ts,js}`.
-- Playwright starts a web server with `npm run build && npm run preview` and
+- Playwright starts a web server with `bun run build && bun run preview` and
   expects the site on port `4173`.
 
 Because `src/` is missing, both unit and E2E test suites will fail or be empty
@@ -203,8 +203,7 @@ Required Cloudflare deployment secrets/variables:
 
 - `bun run build` and `bun run check` call `wrangler types --check` first, which
   requires `worker-configuration.d.ts` to exist. Generate it with `bun run gen`.
-- The Playwright webServer command in `playwright.config.ts` uses `npm run build`
-  and `npm run preview`; while this works if `npm` is present, the project is
-  otherwise Bun-driven.
+- The Playwright webServer command in `playwright.config.ts` uses `bun run build`
+  and `bun run preview`, matching the Bun-driven project setup.
 - Do not run `npm`/`bun` commands from a non-existent `portal/` directory. The
   repository root is the correct working directory.

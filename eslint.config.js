@@ -4,7 +4,7 @@ import tsEslint from "typescript-eslint";
 import svelteParser from "svelte-eslint-parser";
 
 export default tsEslint.config(
-  { ignores: [".svelte-kit/", "node_modules/", "coverage/"] },
+  { ignores: [".svelte-kit/", "node_modules/", "coverage/", "target/"] },
   ...svelte.configs["flat/recommended"],
   {
     files: ["**/*.svelte"],

@@ -1,0 +1,12 @@
+diff --git a/parsers/yaml-parse.mjs b/parsers/yaml-parse.mjs
+index e8eabad3b8c283e033f7218d012a9354ee5748c3..c7aff6996fc323a91e290d3dd1f8c986320984f7 100644
+--- a/parsers/yaml-parse.mjs
++++ b/parsers/yaml-parse.mjs
+@@ -1,6 +1,6 @@
+ // @ts-check
+ 
+-import yaml from "js-yaml";
++import * as yaml from "js-yaml";
+ 
+ /* eslint-disable arrow-body-style */
+ 
