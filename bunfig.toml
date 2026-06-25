@@ -1,0 +1,7 @@
+[install]
+exact = true
+frozenLockfile = true
+
+linker = "isolated"
+
+ignoreScripts = true

@@ -8,7 +8,6 @@ on:
     - cron: "0 1 * * *" # Daily at 01:00 UTC
   workflow_dispatch:
 
-# Cancel in-progress runs for the same ref to save CI minutes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -30,6 +29,11 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -58,6 +62,11 @@ jobs:
       security-events: write
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -117,13 +126,18 @@ jobs:
   security:
     name: Security
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     permissions:
       contents: read
       pull-requests: read
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -148,6 +162,55 @@ jobs:
           exit-code: "1"
           severity: HIGH,CRITICAL
 
+      - name: SAST (Semgrep)
+        run: |
+          pipx run semgrep scan \
+            --config=p/javascript \
+            --config=p/typescript \
+            --error \
+            --quiet \
+            .
+
+  # ---------------------------------------------------------------------------
+  # Stage 1: Antivirus Scan Gate
+  # ---------------------------------------------------------------------------
+  antivirus:
+    name: Antivirus
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clamav
+
+      - name: Prepare freshclam
+        run: |
+          sudo systemctl stop clamav-freshclam 2>/dev/null || true
+          sudo pkill -f freshclam 2>/dev/null || true
+          sudo rm -f /var/log/clamav/freshclam.log
+
+      - name: Update virus database
+        run: sudo freshclam
+
+      - name: Scan for malware
+        run: |
+          clamscan -r \
+            --infected \
+            --exclude-dir='^\.git$' \
+            .
+
   # ---------------------------------------------------------------------------
   # Stage 2: Build
   # ---------------------------------------------------------------------------
@@ -156,9 +219,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security]
+    needs: [fmt, lint, security, antivirus]
+
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -191,6 +264,11 @@ jobs:
           path: target/build
           if-no-files-found: error
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: target/build
+
   # ---------------------------------------------------------------------------
   # Stage 2: Chromium Unit Tests
   # ---------------------------------------------------------------------------
@@ -199,9 +277,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security]
+    needs: [fmt, lint, security, antivirus]
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -253,9 +336,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security]
+    needs: [fmt, lint, security, antivirus]
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -291,9 +379,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security]
+    needs: [fmt, lint, security, antivirus]
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -317,7 +410,7 @@ jobs:
         run: bunx playwright install --with-deps chromium
 
       - name: Run integration tests
-        run: bun run test:e2e
+        run: bun run test:playwright
 
       - name: Upload integration test results artifact
         if: ${{ !cancelled() }}
@@ -350,6 +443,11 @@ jobs:
       HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -411,7 +509,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    needs: [fmt, lint, security, build, unit-chromium, unit-firefox, integration]
+    needs: [fmt, lint, security, antivirus, build, unit-chromium, unit-firefox, integration]
 
     if: |
       github.event_name != 'schedule' &&
@@ -422,6 +520,11 @@ jobs:
       enabled: ${{ steps.check.outputs.enabled }}
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Check Cloudflare configuration
         id: check
         env:
@@ -449,6 +552,11 @@ jobs:
       CF_PAGES_PROJECT: ${{ vars.CF_PAGES_PROJECT }}
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

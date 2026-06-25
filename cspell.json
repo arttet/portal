@@ -8,10 +8,12 @@
         "Artyom",
         "arttet",
         "bun",
+        "bunfig",
         "bunx",
         "cloudflare",
         "cspell",
         "dprint",
+        "justfiles",
         "knip",
         "lefthook",
         "markdownlint",
@@ -19,6 +21,9 @@
         "oxfmt",
         "oxlint",
         "playwright",
+        "prerender",
+        "sarif",
+        "scorecard",
         "startpage",
         "sveltekit",
         "tailwind",
@@ -26,7 +31,8 @@
         "trivy",
         "unstarted",
         "vitest",
-        "wrangler"
+        "wrangler",
+        "zizmor"
       ]
     }
   ],
