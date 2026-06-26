@@ -29,10 +29,9 @@ These are intentional and reviewed — not accidental pins.
 
 ## Security Controls
 
-- **CI Stage 1:** TruffleHog secret scan, Trivy vulnerability/misconfiguration scan, ClamAV antivirus scan, Semgrep SAST (`p/javascript` + `p/typescript`) run in parallel before any build
+- **CI Stage 1:** TruffleHog secret scan, Trivy vulnerability/misconfiguration scan, ClamAV antivirus scan, Semgrep SAST (`ci --oss-only`), CodeQL (`javascript-typescript`) run in parallel before any build
 - **Dependency audit:** GitHub Dependency Review on every pull request
 - **Supply chain:** All GitHub Actions pinned to SHA; `bunfig.toml` enforces `frozenLockfile = true` and `ignoreScripts = true`
 - **Build attestation:** Sigstore provenance (`actions/attest-build-provenance`) and SBOM (`anchore/sbom-action` → `actions/attest`) on every non-PR build; attestation job runs without project source code in scope
-- **OpenSSF Scorecard:** Weekly scan; results published to GitHub Security tab
 - **HTTP headers:** HSTS (2 years, preload), CSP, COOP, CORP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`
-- **Harden-runner:** `egress-policy: audit` on all CI jobs via `step-security/harden-runner`
+- **Harden-runner:** `egress-policy: block` with per-job allowlists on all CI jobs via `step-security/harden-runner`
