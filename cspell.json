@@ -24,6 +24,7 @@
         "prerender",
         "anchore",
         "aquasecurity",
+        "githubusercontent",
         "bestpractices",
         "deps",
         "fulcio",
